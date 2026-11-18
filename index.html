@@ -1,0 +1,227 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>觀日大地｜電子包裹白板</title>
+<style>
+:root {
+  font-family: "Microsoft JhengHei", Arial, sans-serif;
+  color: #243247;
+  background: #f3f6fa;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+header {
+  background: #173d63;
+  color: white;
+  padding: 22px 18px;
+  text-align: center;
+}
+h1 { margin: 0; font-size: clamp(25px, 4vw, 42px); }
+.subtitle { margin-top: 8px; opacity: .85; }
+main { max-width: 1500px; margin: auto; padding: 18px; }
+.summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat {
+  background: white;
+  border-radius: 14px;
+  padding: 18px;
+  text-align: center;
+  box-shadow: 0 2px 10px #172b4610;
+}
+.stat strong { display: block; font-size: 40px; color: #173d63; }
+.stat span { color: #627083; }
+#notice { text-align: center; margin: 14px 0; color: #53657a; }
+.areas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.area {
+  background: white;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px #172b4612;
+}
+.area h2 {
+  margin: 0;
+  padding: 15px;
+  background: #e3edf7;
+  color: #173d63;
+  font-size: 23px;
+}
+.area h2 small { float: right; font-size: 15px; margin-top: 5px; }
+.items { padding: 10px; }
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 12px;
+  border-bottom: 1px solid #edf0f4;
+  font-size: 20px;
+}
+.item:last-child { border-bottom: none; }
+.count {
+  background: #173d63;
+  color: white;
+  border-radius: 9px;
+  padding: 5px 12px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+.empty { padding: 22px 10px; text-align: center; color: #8793a2; }
+footer { text-align: center; color: #6b7888; padding: 18px; font-size: 14px; }
+@media (max-width: 700px) {
+  header { padding: 18px 10px; }
+  main { padding: 10px; }
+  .summary { gap: 8px; }
+  .stat { padding: 12px; }
+  .stat strong { font-size: 32px; }
+  .areas { grid-template-columns: 1fr; gap: 12px; }
+  .area h2 { font-size: 21px; }
+  .item { font-size: 18px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>觀日大地電子包裹白板</h1>
+  <div class="subtitle">未領包裹即時查詢</div>
+</header>
+
+<main>
+  <section class="summary">
+    <div class="stat"><strong id="totalPackages">—</strong><span>未領包裹總數</span></div>
+    <div class="stat"><strong id="totalHouseholds">—</strong><span>待領住戶數</span></div>
+  </section>
+  <div id="notice">正在載入資料…</div>
+  <section class="areas" id="areas"></section>
+</main>
+<footer>資料每 60 秒自動更新｜最後同步：<span id="lastSync">—</span></footer>
+
+<script>
+const PROJECT_URL = "https://sabbmjzhprqiepwnqtvn.supabase.co";
+const PUBLISHABLE_KEY = "請替換成你的Supabase公開金鑰";
+const AREA_NAMES = ["356巷2弄", "356巷", "大樓"];
+
+function safeText(value) {
+  return String(value ?? "");
+}
+
+function renderAreas(rows) {
+  const container = document.getElementById("areas");
+  container.replaceChildren();
+
+  for (const area of AREA_NAMES) {
+    const records = rows.filter(row => row.area === area)
+      .sort((a, b) => safeText(a.address_label)
+      .localeCompare(safeText(b.address_label), "zh-Hant"));
+
+    const section = document.createElement("section");
+    section.className = "area";
+
+    const heading = document.createElement("h2");
+    heading.textContent = area;
+
+    const subtotal = document.createElement("small");
+    subtotal.textContent = records.reduce(
+      (sum, row) => sum + Number(row.package_count || 0), 0
+    ) + " 件";
+    heading.appendChild(subtotal);
+    section.appendChild(heading);
+
+    const list = document.createElement("div");
+    list.className = "items";
+
+    if (!records.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "目前沒有未領包裹";
+      list.appendChild(empty);
+    }
+
+    for (const row of records) {
+      const item = document.createElement("div");
+      item.className = "item";
+
+      const label = document.createElement("span");
+      label.textContent = safeText(row.address_label);
+
+      const count = document.createElement("span");
+      count.className = "count";
+      count.textContent = Number(row.package_count || 0) + " 件";
+
+      item.append(label, count);
+      list.appendChild(item);
+    }
+
+    section.appendChild(list);
+    container.appendChild(section);
+  }
+}
+
+async function fetchTable(table, query = "") {
+  const response = await fetch(
+    PROJECT_URL + "/rest/v1/" + table + query,
+    {
+      headers: {
+        "apikey": PUBLISHABLE_KEY
+      },
+      cache: "no-store"
+    }
+  );
+  if (!response.ok) throw new Error("讀取失敗：" + response.status);
+  return response.json();
+}
+
+async function refresh() {
+  const notice = document.getElementById("notice");
+
+  if (PUBLISHABLE_KEY.startsWith("請替換")) {
+    notice.textContent = "尚未設定 Supabase 公開金鑰";
+    return;
+  }
+
+  try {
+    const [rows, statuses] = await Promise.all([
+      fetchTable("package_counts", "?select=area,address_label,package_count"),
+      fetchTable("package_sync_status",
+        "?select=last_success_at,total_packages,total_households&id=eq.1")
+    ]);
+
+    const status = statuses[0];
+    renderAreas(rows);
+
+    document.getElementById("totalPackages").textContent =
+      status?.total_packages ?? rows.reduce(
+        (sum, row) => sum + Number(row.package_count || 0), 0
+      );
+    document.getElementById("totalHouseholds").textContent =
+      status?.total_households ?? rows.length;
+
+    const lastSync = status?.last_success_at;
+    document.getElementById("lastSync").textContent = lastSync
+      ? new Date(lastSync).toLocaleString("zh-TW", {timeZone: "Asia/Taipei"})
+      : "尚未同步";
+
+    const stale = !lastSync ||
+      Date.now() - new Date(lastSync).getTime() > 5 * 60 * 1000;
+
+    notice.textContent = stale
+      ? "⚠ 資料尚未更新，請以管理室資訊為準"
+      : "資料已更新";
+  } catch (error) {
+    notice.textContent = "⚠ 目前無法取得最新資料，請稍後再試";
+    console.error(error);
+  }
+}
+
+renderAreas([]);
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>
